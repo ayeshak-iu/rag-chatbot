@@ -4,7 +4,7 @@ import docx2txt
 # -------------------------------
 # LOAD DOCUMENT
 # -------------------------------
-text = docx2txt.process("data/sample.docx")
+text = docx2txt.process("sample.docx")
 
 # -------------------------------
 # IMPROVED SEARCH FUNCTION
