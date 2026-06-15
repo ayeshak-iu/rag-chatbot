@@ -1,54 +1,92 @@
 import streamlit as st
 import docx2txt
+import re
+from transformers import T5Tokenizer, T5ForConditionalGeneration
+
+# -------------------------------
+# LOAD LLM (LIGHTWEIGHT)
+# -------------------------------
+@st.cache_resource
+def load_model():
+    model_name = "google/flan-t5-small"   # ✅ small model
+    tokenizer = T5Tokenizer.from_pretrained(model_name)
+    model = T5ForConditionalGeneration.from_pretrained(model_name)
+    return tokenizer, model
+
+tokenizer, model = load_model()
 
 # -------------------------------
 # LOAD DOCUMENT
 # -------------------------------
 text = docx2txt.process("sample.docx")
 
+def clean_text(text):
+    text = re.sub(r'\s+', ' ', text)
+    return text.strip()
+
+text = clean_text(text)
+
 # -------------------------------
-# IMPROVED SEARCH FUNCTION
+# SPLIT INTO SENTENCES
+# -------------------------------
+def get_sentences(text):
+    return re.split(r'(?<=[.!?]) +', text)
+
+# -------------------------------
+# SIMPLE RETRIEVER
 # -------------------------------
 def search_answer(query, text):
-    sentences = text.split(".")
+    sentences = get_sentences(text)
     query_lower = query.lower()
 
-    # 🔥 STEP 1: DIRECT PHRASE MATCH (MOST IMPORTANT)
-    for sentence in sentences:
-        if query_lower in sentence.lower():
-            return sentence.strip()
-
-    # 🔥 STEP 2: SMART KEYWORD MATCH
-    stopwords = ["what", "is", "the", "a", "an", "of", "in", "on", "and"]
-    query_words = [word for word in query_lower.split() if word not in stopwords]
-
-    scored_sentences = []
+    best_score = 0
+    best_sentence = ""
 
     for sentence in sentences:
         score = 0
-        for word in query_words:
+        for word in query_lower.split():
             if word in sentence.lower():
                 score += 2
-        
-        # 🔥 EXTRA BOOST if BOTH important words exist
-        if all(word in sentence.lower() for word in query_words):
-            score += 5
 
-        if score > 0:
-            scored_sentences.append((score, sentence.strip()))
+        if score > best_score:
+            best_score = score
+            best_sentence = sentence
 
-    # sort best first
-    scored_sentences.sort(reverse=True)
+    return best_sentence
 
-    if scored_sentences:
-        return scored_sentences[0][1]
-    
-    return None
+# -------------------------------
+# LLM GENERATION (OPTIMIZED)
+# -------------------------------
+def generate_answer(context, question):
+    # limit context for speed
+    context = context[:500]
+
+    prompt = f"""
+    Answer the question based on the context below.
+
+    Context: {context}
+
+    Question: {question}
+
+    Answer:
+    """
+
+    inputs = tokenizer(prompt, return_tensors="pt", truncation=True)
+
+    outputs = model.generate(
+        **inputs,
+        max_length=100,     # ✅ shorter output
+        do_sample=False     # ✅ stable answers
+    )
+
+    return tokenizer.decode(outputs[0], skip_special_tokens=True)
 
 # -------------------------------
 # STREAMLIT UI
 # -------------------------------
-st.title("📄 RAG-Based Chatbot   ")
+st.title("📄 RAG Chatbot ")
+
+st.write("This chatbot retrieves information from a document and uses a lightweight language model to generate answers.")
 
 query = st.text_input("Ask a question:")
 
@@ -58,21 +96,17 @@ query = st.text_input("Ask a question:")
 if query:
     query_lower = query.lower()
 
-    # ✅ CLEAN LLM RESPONSE
+    
     if any(x in query_lower for x in ["llm", "model", "which model", "what are you"]):
-        result = "I am a RAG-based chatbot. I use document retrieval to answer questions, and I am designed to support advanced language models like FLAN-T5 in full versions."
+        result = "I am a RAG-based chatbot using FLAN-T5 Small, a lightweight transformer-based language model."
 
     else:
-        doc_answer = search_answer(query, text)
+        context = search_answer(query, text)
 
-        if doc_answer:
-            result = doc_answer
+        if context:
+            result = generate_answer(context, query)
         else:
-            # ✅ SMART FALLBACK
-            if "computer vision" in query_lower:
-                result = "Computer vision is a field of artificial intelligence that enables machines to interpret and understand visual information like images and videos."
-            else:
-                result = "This information is not clearly available in the document, but I can try to answer based on general knowledge if needed."
+            result = "I couldn't find relevant information in the document."
 
     st.subheader("Answer:")
     st.write(result)
