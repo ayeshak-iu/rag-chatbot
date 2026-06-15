@@ -10,7 +10,9 @@ text = docx2txt.process("sample.docx")
 # IMPROVED SEARCH FUNCTION
 # -------------------------------
 def search_answer(query, text):
-    query_words = query.lower().split()
+    stopwords = ["what", "is", "the", "a", "an", "of", "in", "on", "and"]
+    
+    query_words = [word for word in query.lower().split() if word not in stopwords]
     sentences = text.split(".")
 
     scored_sentences = []
@@ -19,7 +21,7 @@ def search_answer(query, text):
         score = 0
         for word in query_words:
             if word in sentence.lower():
-                score += 1
+                score += 2   # give higher weight
         
         if score > 0:
             scored_sentences.append((score, sentence.strip()))
