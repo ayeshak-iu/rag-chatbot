@@ -98,7 +98,7 @@ if query:
 
     
     if any(x in query_lower for x in ["llm", "model", "which model", "what are you"]):
-        result = "I am a RAG-based chatbot using FLAN-T5 Small, a lightweight transformer-based language model."
+        result = "I am a RAG-based chatbot using FLAN-T5 Small"
 
     else:
         context = search_answer(query, text)
