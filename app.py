@@ -4,11 +4,11 @@ import re
 from transformers import T5Tokenizer, T5ForConditionalGeneration
 
 # -------------------------------
-# LOAD LLM (LIGHTWEIGHT)
+# LOAD LLM (FLAN-T5 SMALL)
 # -------------------------------
 @st.cache_resource
 def load_model():
-    model_name = "google/flan-t5-small"   # ✅ small model
+    model_name = "google/flan-t5-small"
     tokenizer = T5Tokenizer.from_pretrained(model_name)
     model = T5ForConditionalGeneration.from_pretrained(model_name)
     return tokenizer, model
@@ -33,20 +33,24 @@ def get_sentences(text):
     return re.split(r'(?<=[.!?]) +', text)
 
 # -------------------------------
-# SIMPLE RETRIEVER
+# IMPROVED RETRIEVAL (FIXED)
 # -------------------------------
 def search_answer(query, text):
     sentences = get_sentences(text)
-    query_lower = query.lower()
+    query_words = set(query.lower().split())
 
-    best_score = 0
     best_sentence = ""
+    best_score = 0
 
     for sentence in sentences:
-        score = 0
-        for word in query_lower.split():
-            if word in sentence.lower():
-                score += 2
+        sentence_words = set(sentence.lower().split())
+
+        # overlap scoring
+        score = len(query_words.intersection(sentence_words))
+
+        # boost meaningful sentences
+        if len(sentence.split()) > 8:
+            score += 1
 
         if score > best_score:
             best_score = score
@@ -55,18 +59,19 @@ def search_answer(query, text):
     return best_sentence
 
 # -------------------------------
-# LLM GENERATION (OPTIMIZED)
+# LLM GENERATION (IMPROVED)
 # -------------------------------
 def generate_answer(context, question):
-    # limit context for speed
-    context = context[:500]
+    context = context[:600]  # prevent overload
 
     prompt = f"""
-    Answer the question based on the context below.
+    Use the context below to give a detailed and complete answer.
 
-    Context: {context}
+    Context:
+    {context}
 
-    Question: {question}
+    Question:
+    {question}
 
     Answer:
     """
@@ -75,8 +80,8 @@ def generate_answer(context, question):
 
     outputs = model.generate(
         **inputs,
-        max_length=100,     # ✅ shorter output
-        do_sample=False     # ✅ stable answers
+        max_length=200,
+        do_sample=False
     )
 
     return tokenizer.decode(outputs[0], skip_special_tokens=True)
@@ -84,8 +89,7 @@ def generate_answer(context, question):
 # -------------------------------
 # STREAMLIT UI
 # -------------------------------
-st.title("📄 RAG Chatbot ")
-
+st.title("📄 Improved RAG Chatbot (FLAN-T5 Small)")
 
 
 query = st.text_input("Ask a question:")
@@ -96,9 +100,9 @@ query = st.text_input("Ask a question:")
 if query:
     query_lower = query.lower()
 
-    
-    if any(x in query_lower for x in ["llm", "model", "which model", "what are you"]):
-        result = "I am a RAG-based chatbot using FLAN-T5 Small"
+    # system identity fix (optional but useful)
+    if any(x in query_lower for x in ["llm", "model", "what are you", "which model"]):
+        result = "I am a RAG-based chatbot using FLAN-T5 Small."
 
     else:
         context = search_answer(query, text)
