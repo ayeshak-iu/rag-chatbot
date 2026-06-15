@@ -89,7 +89,7 @@ def generate_answer(context, question):
 # -------------------------------
 # STREAMLIT UI
 # -------------------------------
-st.title("📄 Improved RAG Chatbot (FLAN-T5 Small)")
+st.title("📄 RAG Chatbot")
 
 
 query = st.text_input("Ask a question:")
