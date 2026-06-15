@@ -86,7 +86,7 @@ def generate_answer(context, question):
 # -------------------------------
 st.title("📄 RAG Chatbot ")
 
-st.write("This chatbot retrieves information from a document and uses a lightweight language model to generate answers.")
+
 
 query = st.text_input("Ask a question:")
 
