@@ -4,7 +4,7 @@ import re
 from transformers import T5Tokenizer, T5ForConditionalGeneration
 
 # -------------------------------
-# LOAD LLM (FLAN-T5 SMALL)
+# LOAD MODEL
 # -------------------------------
 @st.cache_resource
 def load_model():
@@ -27,13 +27,14 @@ def clean_text(text):
 text = clean_text(text)
 
 # -------------------------------
-# SPLIT INTO SENTENCES
+# BETTER SENTENCE SPLITTING
 # -------------------------------
 def get_sentences(text):
-    return re.split(r'(?<=[.!?]) +', text)
+    # FIX: better splitting (prevents broken context)
+    return re.split(r'(?<=[.!?])\s+', text)
 
 # -------------------------------
-# RETRIEVAL
+# IMPROVED RETRIEVAL (IMPORTANT FIX)
 # -------------------------------
 def search_answer(query, text):
     sentences = get_sentences(text)
@@ -44,40 +45,49 @@ def search_answer(query, text):
 
     for i, sentence in enumerate(sentences):
         sentence_words = set(sentence.lower().split())
+
         score = len(query_words.intersection(sentence_words))
 
         if score > best_score:
             best_score = score
             best_index = i
 
-    # 🔥 TAKE MORE CONTEXT (THIS IS THE FIX)
-    context_window = sentences[max(0, best_index-1): best_index+2]
+    # 🔥 FIX: expand context window more (VERY IMPORTANT)
+    start = max(0, best_index - 2)
+    end = min(len(sentences), best_index + 3)
+
+    context_window = sentences[start:end]
 
     return " ".join(context_window)
 
 # -------------------------------
-# LLM GENERATION (IMPROVED)
+# LLM GENERATION (FOR BETTER ANSWERS)
 # -------------------------------
 def generate_answer(context, question):
-    context = context[:600]  # prevent overload
+    context = context[:800]  # more context = better answers
 
     prompt = f"""
-    Use the context below to give a detailed and complete answer.
+You are an expert assistant.
 
-    Context:
-    {context}
+Use the context below to answer in a FULL, DETAILED, EXPLANATORY way.
 
-    Question:
-    {question}
+Do NOT give short answers.
 
-    Answer:
-    """
+Context:
+{context}
+
+Question:
+{question}
+
+Answer:
+"""
 
     inputs = tokenizer(prompt, return_tensors="pt", truncation=True)
 
     outputs = model.generate(
         **inputs,
-        max_length=200,
+        max_length=256,
+        min_length=80,      # 🔥 forces longer answers
         do_sample=False
     )
 
@@ -86,8 +96,7 @@ def generate_answer(context, question):
 # -------------------------------
 # STREAMLIT UI
 # -------------------------------
-st.title("📄 RAG Chatbot")
-
+st.title("📄RAG Chatbot")
 
 query = st.text_input("Ask a question:")
 
@@ -97,9 +106,8 @@ query = st.text_input("Ask a question:")
 if query:
     query_lower = query.lower()
 
-    # system identity fix (optional but useful)
     if any(x in query_lower for x in ["llm", "model", "what are you", "which model"]):
-        result = "I am a RAG-based chatbot using FLAN-T5 Small."
+        result = "I am a RAG-based chatbot using FLAN-T5 Small"
 
     else:
         context = search_answer(query, text)
