@@ -33,30 +33,27 @@ def get_sentences(text):
     return re.split(r'(?<=[.!?]) +', text)
 
 # -------------------------------
-# IMPROVED RETRIEVAL (FIXED)
+# RETRIEVAL
 # -------------------------------
 def search_answer(query, text):
     sentences = get_sentences(text)
     query_words = set(query.lower().split())
 
-    best_sentence = ""
     best_score = 0
+    best_index = 0
 
-    for sentence in sentences:
+    for i, sentence in enumerate(sentences):
         sentence_words = set(sentence.lower().split())
-
-        # overlap scoring
         score = len(query_words.intersection(sentence_words))
-
-        # boost meaningful sentences
-        if len(sentence.split()) > 8:
-            score += 1
 
         if score > best_score:
             best_score = score
-            best_sentence = sentence
+            best_index = i
 
-    return best_sentence
+    # 🔥 TAKE MORE CONTEXT (THIS IS THE FIX)
+    context_window = sentences[max(0, best_index-1): best_index+2]
+
+    return " ".join(context_window)
 
 # -------------------------------
 # LLM GENERATION (IMPROVED)
