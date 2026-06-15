@@ -4,7 +4,7 @@ import re
 from transformers import T5Tokenizer, T5ForConditionalGeneration
 
 # -------------------------------
-# LOAD MODEL
+# LOAD LLM
 # -------------------------------
 @st.cache_resource
 def load_model():
@@ -27,14 +27,35 @@ def clean_text(text):
 text = clean_text(text)
 
 # -------------------------------
-# BETTER SENTENCE SPLITTING
+# SENTENCE SPLITTING
 # -------------------------------
 def get_sentences(text):
-    # FIX: better splitting (prevents broken context)
     return re.split(r'(?<=[.!?])\s+', text)
 
 # -------------------------------
-# IMPROVED RETRIEVAL (IMPORTANT FIX)
+# REMOVE DUPLICATES (IMPORTANT FIX)
+# -------------------------------
+def remove_duplicate_sentences(text):
+    sentences = [s.strip() for s in text.split(".") if s.strip()]
+    seen = set()
+    result = []
+
+    for s in sentences:
+        if s.lower() not in seen:
+            seen.add(s.lower())
+            result.append(s)
+
+    return ". ".join(result)
+
+# -------------------------------
+# LIMIT TO 2 SENTENCES ONLY
+# -------------------------------
+def limit_to_two_sentences(text):
+    sentences = [s.strip() for s in text.split(".") if s.strip()]
+    return ". ".join(sentences[:2])
+
+# -------------------------------
+# RETRIEVAL (IMPROVED)
 # -------------------------------
 def search_answer(query, text):
     sentences = get_sentences(text)
@@ -45,33 +66,34 @@ def search_answer(query, text):
 
     for i, sentence in enumerate(sentences):
         sentence_words = set(sentence.lower().split())
-
         score = len(query_words.intersection(sentence_words))
 
         if score > best_score:
             best_score = score
             best_index = i
 
-    # 🔥 FIX: expand context window more (VERY IMPORTANT)
+    # expand context (better understanding)
     start = max(0, best_index - 2)
     end = min(len(sentences), best_index + 3)
 
     context_window = sentences[start:end]
+    context = " ".join(context_window)
 
-    return " ".join(context_window)
+    # 🔥 FIX: remove duplicates
+    context = remove_duplicate_sentences(context)
+
+    return context
 
 # -------------------------------
-# LLM GENERATION (FOR BETTER ANSWERS)
+# LLM GENERATION
 # -------------------------------
 def generate_answer(context, question):
-    context = context[:800]  # more context = better answers
+    context = limit_to_two_sentences(context)  # 🔥 FORCE 2 SENTENCES
 
     prompt = f"""
 You are an expert assistant.
 
-Use the context below to answer in a FULL, DETAILED, EXPLANATORY way.
-
-Do NOT give short answers.
+Answer the question clearly in 1-2 sentences only.
 
 Context:
 {context}
@@ -86,8 +108,8 @@ Answer:
 
     outputs = model.generate(
         **inputs,
-        max_length=256,
-        min_length=80,      # 🔥 forces longer answers
+        max_length=120,
+        min_length=30,
         do_sample=False
     )
 
