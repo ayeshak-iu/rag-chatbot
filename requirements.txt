@@ -1,2 +1,5 @@
 streamlit
 docx2txt
+transformers
+torch
+sentencepiece
