@@ -10,10 +10,17 @@ text = docx2txt.process("sample.docx")
 # IMPROVED SEARCH FUNCTION
 # -------------------------------
 def search_answer(query, text):
-    stopwords = ["what", "is", "the", "a", "an", "of", "in", "on", "and"]
-    
-    query_words = [word for word in query.lower().split() if word not in stopwords]
     sentences = text.split(".")
+    query_lower = query.lower()
+
+    # 🔥 STEP 1: DIRECT PHRASE MATCH (MOST IMPORTANT)
+    for sentence in sentences:
+        if query_lower in sentence.lower():
+            return sentence.strip()
+
+    # 🔥 STEP 2: SMART KEYWORD MATCH
+    stopwords = ["what", "is", "the", "a", "an", "of", "in", "on", "and"]
+    query_words = [word for word in query_lower.split() if word not in stopwords]
 
     scored_sentences = []
 
@@ -21,19 +28,22 @@ def search_answer(query, text):
         score = 0
         for word in query_words:
             if word in sentence.lower():
-                score += 2   # give higher weight
+                score += 2
         
+        # 🔥 EXTRA BOOST if BOTH important words exist
+        if all(word in sentence.lower() for word in query_words):
+            score += 5
+
         if score > 0:
             scored_sentences.append((score, sentence.strip()))
 
-    # sort by best match
+    # sort best first
     scored_sentences.sort(reverse=True)
 
     if scored_sentences:
-        best_matches = [s[1] for s in scored_sentences[:2]]
-        return ". ".join(best_matches)
-    else:
-        return None
+        return scored_sentences[0][1]
+    
+    return None
 
 # -------------------------------
 # STREAMLIT UI
