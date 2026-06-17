@@ -12,10 +12,15 @@ import google.generativeai as genai
 # GEMINI SETUP
 # -------------------------------
 genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-gemini_model = genai.GenerativeModel("gemini-1.5-flash")
+
+# safer model fallback (avoids 404 issues)
+try:
+    gemini_model = genai.GenerativeModel("gemini-1.5-flash")
+except:
+    gemini_model = genai.GenerativeModel("gemini-pro")
 
 # -------------------------------
-# LOAD FLAN-T5 MODEL (CACHED)
+# LOAD FLAN-T5
 # -------------------------------
 @st.cache_resource
 def load_llm():
@@ -27,11 +32,11 @@ def load_llm():
 tokenizer, t5_model = load_llm()
 
 # -------------------------------
-# LOAD EMBEDDER (CACHED)
+# LOAD EMBEDDER
 # -------------------------------
 @st.cache_resource
 def load_embedder():
-    return SentenceTransformer('all-MiniLM-L6-v2')
+    return SentenceTransformer("all-MiniLM-L6-v2")
 
 embedder = load_embedder()
 
@@ -47,13 +52,13 @@ def load_document(path):
 text = load_document("sample.docx")
 
 # -------------------------------
-# BETTER CHUNKING (WORD-BASED)
+# BETTER CHUNKING (LESS NOISE)
 # -------------------------------
-def split_into_chunks(text, chunk_size=120, overlap=20):
+def split_into_chunks(text, chunk_size=80, overlap=15):
     words = text.split()
     chunks = []
-    start = 0
 
+    start = 0
     while start < len(words):
         end = start + chunk_size
         chunk = " ".join(words[start:end])
@@ -65,7 +70,7 @@ def split_into_chunks(text, chunk_size=120, overlap=20):
 chunks = split_into_chunks(text)
 
 # -------------------------------
-# EMBEDDINGS + FAISS (FIXED)
+# EMBEDDINGS + FAISS (COSINE)
 # -------------------------------
 chunk_embeddings = embedder.encode(
     chunks,
@@ -76,12 +81,11 @@ chunk_embeddings = np.array(chunk_embeddings).astype("float32")
 
 dimension = chunk_embeddings.shape[1]
 
-# FIX: Use cosine similarity instead of L2
 index = faiss.IndexFlatIP(dimension)
 index.add(chunk_embeddings)
 
 # -------------------------------
-# SEARCH FUNCTION (RAG FIXED)
+# SEARCH FUNCTION
 # -------------------------------
 def search_answer(query):
     query_embedding = embedder.encode(
@@ -91,20 +95,19 @@ def search_answer(query):
 
     query_embedding = np.array(query_embedding).astype("float32")
 
-    scores, indices = index.search(query_embedding, k=3)
+    scores, indices = index.search(query_embedding, k=1)
 
-    retrieved_chunks = [chunks[i] for i in indices[0]]
-    context = " ".join(retrieved_chunks)
+    best_chunk = chunks[indices[0][0]]
+    score = scores[0][0]
 
-    # top similarity score (cosine)
-    return context, scores[0][0]
+    return best_chunk, score
 
 # -------------------------------
-# FLAN-T5 ANSWER (DOCUMENT)
+# FLAN-T5 ANSWER (DOCUMENT ONLY)
 # -------------------------------
 def generate_doc_answer(context, question):
     prompt = f"""
-Answer in 1-2 sentences based on the context.
+Answer in 1-2 sentences based ONLY on the context.
 
 Context:
 {context}
@@ -125,7 +128,7 @@ Answer:
     return tokenizer.decode(outputs[0], skip_special_tokens=True)
 
 # -------------------------------
-# GEMINI ANSWER (GENERAL)
+# GEMINI FALLBACK
 # -------------------------------
 def generate_gemini_answer(question):
     try:
@@ -137,12 +140,12 @@ def generate_gemini_answer(question):
 # -------------------------------
 # STREAMLIT UI
 # -------------------------------
-st.title("📄 RAG Chatbot")
+st.title("RAG Chatbot ")
 
 query = st.text_input("Ask a question:")
 
 # -------------------------------
-# MAIN LOGIC (FIXED DECISION RULE)
+# MAIN LOGIC
 # -------------------------------
 if query:
 
@@ -151,8 +154,8 @@ if query:
     st.write("Similarity Score:", score)
     st.write("Retrieved Context:", context)
 
-    # FIXED threshold for cosine similarity
-    if score > 0.45 and len(text.strip()) > 0:
+    # STRICT threshold (important fix)
+    if score > 0.60 and len(text.strip()) > 0:
         result = generate_doc_answer(context, query)
         source = "📄 Document (RAG)"
     else:
