@@ -9,15 +9,15 @@ from transformers import T5Tokenizer, T5ForConditionalGeneration
 import google.generativeai as genai
 
 # ===============================
-# GEMINI SETUP (FIXED + SAFE)
+# GEMINI SETUP (FIXED)
 # ===============================
 genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
-# Use stable model (avoids 404 issues)
-gemini_model = genai.GenerativeModel("gemini-pro")
+# FIX: correct modern model name
+gemini_model = genai.GenerativeModel("gemini-1.5-flash")
 
 # ===============================
-# FLAN-T5 MODEL
+# LOAD FLAN-T5
 # ===============================
 @st.cache_resource
 def load_llm():
@@ -28,7 +28,7 @@ def load_llm():
 tokenizer, t5_model = load_llm()
 
 # ===============================
-# EMBEDDER
+# LOAD EMBEDDER
 # ===============================
 @st.cache_resource
 def load_embedder():
@@ -48,7 +48,7 @@ def load_document(path):
 text = load_document("sample.docx")
 
 # ===============================
-# CHUNKING (IMPROVED)
+# CHUNKING
 # ===============================
 def split_into_chunks(text, chunk_size=80, overlap=15):
     words = text.split()
@@ -74,7 +74,7 @@ index = faiss.IndexFlatIP(chunk_embeddings.shape[1])
 index.add(chunk_embeddings)
 
 # ===============================
-# RETRIEVAL FUNCTION
+# RETRIEVAL
 # ===============================
 def get_context(query):
     q = embedder.encode([query], normalize_embeddings=True)
@@ -82,13 +82,10 @@ def get_context(query):
 
     scores, indices = index.search(q, k=1)
 
-    best_chunk = chunks[indices[0][0]]
-    score = scores[0][0]
-
-    return best_chunk, score
+    return chunks[indices[0][0]], scores[0][0]
 
 # ===============================
-# DOCUMENT ANSWER (FLAN-T5)
+# DOCUMENT ANSWER (RAG)
 # ===============================
 def doc_answer(context, question):
     prompt = f"""
@@ -110,7 +107,7 @@ Answer:
     return tokenizer.decode(outputs[0], skip_special_tokens=True)
 
 # ===============================
-# GEMINI FALLBACK
+# GEMINI ANSWER (FIXED + SAFE)
 # ===============================
 def gemini_answer(question):
     try:
@@ -120,9 +117,9 @@ def gemini_answer(question):
         return f"Gemini Error: {str(e)}"
 
 # ===============================
-# STREAMLIT UI (CLEAN)
+# STREAMLIT UI
 # ===============================
-st.title("RAG Chatbot")
+st.title("📄 RAG Chatbot (Final Fixed Version)")
 
 query = st.text_input("Ask a question:")
 
@@ -133,12 +130,15 @@ if query:
 
     context, score = get_context(query)
 
-    #  DECISION RULE
+    # decide source
     if score > 0.60 and len(text.strip()) > 0:
         answer = doc_answer(context, query)
+        model_used = "📄 FLAN-T5 (RAG - Document)"
     else:
         answer = gemini_answer(query)
+        model_used = "🌐 Gemini (1.5 Flash)"
 
-    # ANSWER 
     st.subheader("Answer:")
     st.write(answer)
+
+    st.caption(f"Model Used: {model_used}")
