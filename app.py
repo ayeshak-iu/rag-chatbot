@@ -6,15 +6,12 @@ import os
 
 from sentence_transformers import SentenceTransformer
 from transformers import T5Tokenizer, T5ForConditionalGeneration
-import google.generativeai as genai
+from google import genai
 
 # ===============================
-# GEMINI SETUP (FIXED)
+# GEMINI SETUP (NEW SDK FIXED)
 # ===============================
-genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-
-# ✅ FIX: correct format for your SDK version (0.8.6)
-gemini_model = genai.GenerativeModel("models/gemini-1.5-flash")
+client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
 
 # ===============================
 # LOAD FLAN-T5
@@ -48,7 +45,7 @@ def load_document(path):
 text = load_document("sample.docx")
 
 # ===============================
-# CHUNKING FUNCTION
+# CHUNKING
 # ===============================
 def split_into_chunks(text, chunk_size=80, overlap=15):
     words = text.split()
@@ -64,8 +61,11 @@ def split_into_chunks(text, chunk_size=80, overlap=15):
 
 chunks = split_into_chunks(text)
 
+if len(chunks) == 0:
+    chunks = ["No document loaded."]
+
 # ===============================
-# FAISS INDEX (COSINE SIMILARITY)
+# FAISS INDEX
 # ===============================
 chunk_embeddings = embedder.encode(chunks, normalize_embeddings=True)
 chunk_embeddings = np.array(chunk_embeddings).astype("float32")
@@ -74,18 +74,17 @@ index = faiss.IndexFlatIP(chunk_embeddings.shape[1])
 index.add(chunk_embeddings)
 
 # ===============================
-# RETRIEVAL FUNCTION
+# RETRIEVAL
 # ===============================
 def get_context(query):
     q = embedder.encode([query], normalize_embeddings=True)
     q = np.array(q).astype("float32")
 
     scores, indices = index.search(q, k=1)
-
     return chunks[indices[0][0]], float(scores[0][0])
 
 # ===============================
-# FLAN-T5 (RAG ANSWER)
+# FLAN-T5 RAG ANSWER
 # ===============================
 def doc_answer(context, question):
     prompt = f"""
@@ -114,15 +113,36 @@ Answer:
 # ===============================
 def gemini_answer(question):
     try:
-        response = gemini_model.generate_content(question)
+        response = client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=question
+        )
         return response.text
     except Exception as e:
         return f"Gemini Error: {str(e)}"
 
 # ===============================
+# MODEL QUESTION DETECTOR
+# ===============================
+def is_model_question(query):
+    q = query.lower()
+    keywords = [
+        "which model",
+        "what model",
+        "which llm",
+        "what llm",
+        "are you gemini",
+        "are you flan",
+        "who are you",
+        "your model",
+        "what ai are you"
+    ]
+    return any(k in q for k in keywords)
+
+# ===============================
 # STREAMLIT UI
 # ===============================
-st.title(" RAG Chatbot")
+st.title("RAG Chatbot ")
 
 query = st.text_input("Ask a question:")
 
@@ -131,16 +151,31 @@ query = st.text_input("Ask a question:")
 # ===============================
 if query:
 
-    context, score = get_context(query)
+    # ===============================
+    # MODEL INFO HANDLING
+    # ===============================
+    if is_model_question(query):
+        answer = (
+            "I am a hybrid AI system.\n\n"
+            "🔹 FLAN-T5 → Used for document-based answers (RAG)\n"
+            "🔹 Gemini 1.5 Flash → Used for general questions\n\n"
+            "The system automatically chooses the best model based on similarity score."
+        )
+        model_used = "SYSTEM INFO RESPONSE"
 
-    # Decide whether to use RAG or Gemini
-    if score > 0.60 and len(text.strip()) > 0:
-        answer = doc_answer(context, query)
-        model_used = "📄 FLAN-T5 (RAG - Document)"
     else:
-        answer = gemini_answer(query)
-        model_used = "🌐 Gemini (1.5 Flash)"
+        context, score = get_context(query)
 
+        if score > 0.60 and len(text.strip()) > 0:
+            answer = doc_answer(context, query)
+            model_used = "📄 FLAN-T5 (RAG - Document)"
+        else:
+            answer = gemini_answer(query)
+            model_used = "🌐 Gemini 1.5 Flash"
+
+    # ===============================
+    # OUTPUT
+    # ===============================
     st.subheader("Answer:")
     st.write(answer)
 
