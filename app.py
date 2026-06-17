@@ -65,27 +65,39 @@ def split_into_chunks(text, chunk_size=120, overlap=20):
 chunks = split_into_chunks(text)
 
 # -------------------------------
-# EMBEDDINGS + FAISS
+# EMBEDDINGS + FAISS (FIXED)
 # -------------------------------
-chunk_embeddings = embedder.encode(chunks)
+chunk_embeddings = embedder.encode(
+    chunks,
+    normalize_embeddings=True
+)
+
+chunk_embeddings = np.array(chunk_embeddings).astype("float32")
 
 dimension = chunk_embeddings.shape[1]
-index = faiss.IndexFlatL2(dimension)
 
-index.add(np.array(chunk_embeddings).astype("float32"))
+# FIX: Use cosine similarity instead of L2
+index = faiss.IndexFlatIP(dimension)
+index.add(chunk_embeddings)
 
 # -------------------------------
-# SEARCH FUNCTION (RAG)
+# SEARCH FUNCTION (RAG FIXED)
 # -------------------------------
 def search_answer(query):
-    query_embedding = embedder.encode([query]).astype("float32")
+    query_embedding = embedder.encode(
+        [query],
+        normalize_embeddings=True
+    )
 
-    distances, indices = index.search(query_embedding, k=3)
+    query_embedding = np.array(query_embedding).astype("float32")
+
+    scores, indices = index.search(query_embedding, k=3)
 
     retrieved_chunks = [chunks[i] for i in indices[0]]
     context = " ".join(retrieved_chunks)
 
-    return context, distances[0][0]
+    # top similarity score (cosine)
+    return context, scores[0][0]
 
 # -------------------------------
 # FLAN-T5 ANSWER (DOCUMENT)
@@ -121,6 +133,7 @@ def generate_gemini_answer(question):
         return response.text
     except Exception as e:
         return f"Gemini Error: {str(e)}"
+
 # -------------------------------
 # STREAMLIT UI
 # -------------------------------
@@ -129,16 +142,17 @@ st.title("📄 RAG Chatbot")
 query = st.text_input("Ask a question:")
 
 # -------------------------------
-# MAIN LOGIC
+# MAIN LOGIC (FIXED DECISION RULE)
 # -------------------------------
 if query:
 
     context, score = search_answer(query)
 
-    # safer similarity scaling
-    similarity = 1 / (1 + score)
+    st.write("Similarity Score:", score)
+    st.write("Retrieved Context:", context)
 
-    if similarity > 0.75 and len(text) > 0:
+    # FIXED threshold for cosine similarity
+    if score > 0.45 and len(text.strip()) > 0:
         result = generate_doc_answer(context, query)
         source = "📄 Document (RAG)"
     else:
