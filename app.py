@@ -9,30 +9,29 @@ from transformers import T5Tokenizer, T5ForConditionalGeneration
 import google.generativeai as genai
 
 # -------------------------------
-# GEMINI SETUP
+# GEMINI SETUP (FIXED)
 # -------------------------------
 genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
-# safer model fallback (avoids 404 issues)
+# FIX: safer model selection
 try:
-    gemini_model = genai.GenerativeModel("gemini-1.5-flash")
+    gemini_model = genai.GenerativeModel("gemini-1.5-pro")
 except:
     gemini_model = genai.GenerativeModel("gemini-pro")
 
 # -------------------------------
-# LOAD FLAN-T5
+# FLAN-T5
 # -------------------------------
 @st.cache_resource
 def load_llm():
-    model_name = "google/flan-t5-small"
-    tokenizer = T5Tokenizer.from_pretrained(model_name)
-    model = T5ForConditionalGeneration.from_pretrained(model_name)
+    tokenizer = T5Tokenizer.from_pretrained("google/flan-t5-small")
+    model = T5ForConditionalGeneration.from_pretrained("google/flan-t5-small")
     return tokenizer, model
 
 tokenizer, t5_model = load_llm()
 
 # -------------------------------
-# LOAD EMBEDDER
+# EMBEDDER
 # -------------------------------
 @st.cache_resource
 def load_embedder():
@@ -41,7 +40,7 @@ def load_embedder():
 embedder = load_embedder()
 
 # -------------------------------
-# LOAD DOCUMENT
+# LOAD DOC
 # -------------------------------
 @st.cache_data
 def load_document(path):
@@ -52,7 +51,7 @@ def load_document(path):
 text = load_document("sample.docx")
 
 # -------------------------------
-# BETTER CHUNKING (LESS NOISE)
+# CHUNKING (CLEAN)
 # -------------------------------
 def split_into_chunks(text, chunk_size=80, overlap=15):
     words = text.split()
@@ -60,9 +59,7 @@ def split_into_chunks(text, chunk_size=80, overlap=15):
 
     start = 0
     while start < len(words):
-        end = start + chunk_size
-        chunk = " ".join(words[start:end])
-        chunks.append(chunk)
+        chunks.append(" ".join(words[start:start + chunk_size]))
         start += chunk_size - overlap
 
     return chunks
@@ -70,44 +67,31 @@ def split_into_chunks(text, chunk_size=80, overlap=15):
 chunks = split_into_chunks(text)
 
 # -------------------------------
-# EMBEDDINGS + FAISS (COSINE)
+# FAISS (COSINE SEARCH)
 # -------------------------------
-chunk_embeddings = embedder.encode(
-    chunks,
-    normalize_embeddings=True
-)
-
+chunk_embeddings = embedder.encode(chunks, normalize_embeddings=True)
 chunk_embeddings = np.array(chunk_embeddings).astype("float32")
 
-dimension = chunk_embeddings.shape[1]
-
-index = faiss.IndexFlatIP(dimension)
+index = faiss.IndexFlatIP(chunk_embeddings.shape[1])
 index.add(chunk_embeddings)
 
 # -------------------------------
-# SEARCH FUNCTION
+# RETRIEVAL (NO DEBUG OUTPUT)
 # -------------------------------
-def search_answer(query):
-    query_embedding = embedder.encode(
-        [query],
-        normalize_embeddings=True
-    )
+def get_context(query):
+    q = embedder.encode([query], normalize_embeddings=True)
+    q = np.array(q).astype("float32")
 
-    query_embedding = np.array(query_embedding).astype("float32")
+    scores, indices = index.search(q, k=1)
 
-    scores, indices = index.search(query_embedding, k=1)
-
-    best_chunk = chunks[indices[0][0]]
-    score = scores[0][0]
-
-    return best_chunk, score
+    return chunks[indices[0][0]], scores[0][0]
 
 # -------------------------------
-# FLAN-T5 ANSWER (DOCUMENT ONLY)
+# FLAN-T5 ANSWER
 # -------------------------------
-def generate_doc_answer(context, question):
+def doc_answer(context, question):
     prompt = f"""
-Answer in 1-2 sentences based ONLY on the context.
+Answer briefly using the context.
 
 Context:
 {context}
@@ -120,49 +104,37 @@ Answer:
 
     inputs = tokenizer(prompt, return_tensors="pt", truncation=True)
 
-    outputs = t5_model.generate(
-        **inputs,
-        max_length=120
-    )
+    outputs = t5_model.generate(**inputs, max_length=120)
 
     return tokenizer.decode(outputs[0], skip_special_tokens=True)
 
 # -------------------------------
 # GEMINI FALLBACK
 # -------------------------------
-def generate_gemini_answer(question):
+def gemini_answer(question):
     try:
-        response = gemini_model.generate_content(question)
-        return response.text
-    except Exception as e:
-        return f"Gemini Error: {str(e)}"
+        res = gemini_model.generate_content(question)
+        return res.text
+    except Exception:
+        return "Unable to generate answer right now."
 
 # -------------------------------
-# STREAMLIT UI
+# STREAMLIT UI (CLEAN)
 # -------------------------------
-st.title("RAG Chatbot ")
+st.title("RAG Chatbot")
 
 query = st.text_input("Ask a question:")
 
-# -------------------------------
-# MAIN LOGIC
-# -------------------------------
 if query:
 
-    context, score = search_answer(query)
+    context, score = get_context(query)
 
-    st.write("Similarity Score:", score)
-    st.write("Retrieved Context:", context)
-
-    # STRICT threshold (important fix)
+    # RULE:
     if score > 0.60 and len(text.strip()) > 0:
-        result = generate_doc_answer(context, query)
-        source = "📄 Document (RAG)"
+        answer = doc_answer(context, query)
     else:
-        result = generate_gemini_answer(query)
-        source = "🌐 Gemini"
+        answer = gemini_answer(query)
 
+    #OUTPUT 
     st.subheader("Answer:")
-    st.write(result)
-
-    st.caption(f"Source: {source}")
+    st.write(answer)
