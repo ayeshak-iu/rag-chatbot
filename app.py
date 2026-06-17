@@ -1,99 +1,98 @@
 import streamlit as st
 import docx2txt
-import re
+import numpy as np
+import faiss
+import os
+
+from sentence_transformers import SentenceTransformer
 from transformers import T5Tokenizer, T5ForConditionalGeneration
+import google.generativeai as genai
 
 # -------------------------------
-# LOAD LLM
+# GEMINI SETUP
+# -------------------------------
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+gemini_model = genai.GenerativeModel("gemini-1.5-flash")
+
+# -------------------------------
+# LOAD FLAN-T5 MODEL (CACHED)
 # -------------------------------
 @st.cache_resource
-def load_model():
+def load_llm():
     model_name = "google/flan-t5-small"
     tokenizer = T5Tokenizer.from_pretrained(model_name)
     model = T5ForConditionalGeneration.from_pretrained(model_name)
     return tokenizer, model
 
-tokenizer, model = load_model()
+tokenizer, t5_model = load_llm()
+
+# -------------------------------
+# LOAD EMBEDDER (CACHED)
+# -------------------------------
+@st.cache_resource
+def load_embedder():
+    return SentenceTransformer('all-MiniLM-L6-v2')
+
+embedder = load_embedder()
 
 # -------------------------------
 # LOAD DOCUMENT
 # -------------------------------
-text = docx2txt.process("sample.docx")
+@st.cache_data
+def load_document(path):
+    if not os.path.exists(path):
+        return ""
+    return docx2txt.process(path)
 
-def clean_text(text):
-    text = re.sub(r'\s+', ' ', text)
-    return text.strip()
-
-text = clean_text(text)
-
-# -------------------------------
-# SENTENCE SPLITTING
-# -------------------------------
-def get_sentences(text):
-    return re.split(r'(?<=[.!?])\s+', text)
+text = load_document("sample.docx")
 
 # -------------------------------
-# REMOVE DUPLICATES (IMPORTANT FIX)
+# BETTER CHUNKING (WORD-BASED)
 # -------------------------------
-def remove_duplicate_sentences(text):
-    sentences = [s.strip() for s in text.split(".") if s.strip()]
-    seen = set()
-    result = []
+def split_into_chunks(text, chunk_size=120, overlap=20):
+    words = text.split()
+    chunks = []
+    start = 0
 
-    for s in sentences:
-        if s.lower() not in seen:
-            seen.add(s.lower())
-            result.append(s)
+    while start < len(words):
+        end = start + chunk_size
+        chunk = " ".join(words[start:end])
+        chunks.append(chunk)
+        start += chunk_size - overlap
 
-    return ". ".join(result)
+    return chunks
 
-# -------------------------------
-# LIMIT TO 2 SENTENCES ONLY
-# -------------------------------
-def limit_to_two_sentences(text):
-    sentences = [s.strip() for s in text.split(".") if s.strip()]
-    return ". ".join(sentences[:2])
+chunks = split_into_chunks(text)
 
 # -------------------------------
-# RETRIEVAL (IMPROVED)
+# EMBEDDINGS + FAISS
 # -------------------------------
-def search_answer(query, text):
-    sentences = get_sentences(text)
-    query_words = set(query.lower().split())
+chunk_embeddings = embedder.encode(chunks)
 
-    best_score = 0
-    best_index = 0
+dimension = chunk_embeddings.shape[1]
+index = faiss.IndexFlatL2(dimension)
 
-    for i, sentence in enumerate(sentences):
-        sentence_words = set(sentence.lower().split())
-        score = len(query_words.intersection(sentence_words))
-
-        if score > best_score:
-            best_score = score
-            best_index = i
-
-    # expand context (better understanding)
-    start = max(0, best_index - 2)
-    end = min(len(sentences), best_index + 3)
-
-    context_window = sentences[start:end]
-    context = " ".join(context_window)
-
-    # 🔥 FIX: remove duplicates
-    context = remove_duplicate_sentences(context)
-
-    return context
+index.add(np.array(chunk_embeddings).astype("float32"))
 
 # -------------------------------
-# LLM GENERATION
+# SEARCH FUNCTION (RAG)
 # -------------------------------
-def generate_answer(context, question):
-    context = limit_to_two_sentences(context)  # 🔥 FORCE 2 SENTENCES
+def search_answer(query):
+    query_embedding = embedder.encode([query]).astype("float32")
 
+    distances, indices = index.search(query_embedding, k=3)
+
+    retrieved_chunks = [chunks[i] for i in indices[0]]
+    context = " ".join(retrieved_chunks)
+
+    return context, distances[0][0]
+
+# -------------------------------
+# FLAN-T5 ANSWER (DOCUMENT)
+# -------------------------------
+def generate_doc_answer(context, question):
     prompt = f"""
-You are an expert assistant.
-
-Answer the question clearly in 1-2 sentences only.
+Answer in 1-2 sentences based on the context.
 
 Context:
 {context}
@@ -106,19 +105,27 @@ Answer:
 
     inputs = tokenizer(prompt, return_tensors="pt", truncation=True)
 
-    outputs = model.generate(
+    outputs = t5_model.generate(
         **inputs,
-        max_length=120,
-        min_length=30,
-        do_sample=False
+        max_length=120
     )
 
     return tokenizer.decode(outputs[0], skip_special_tokens=True)
 
 # -------------------------------
+# GEMINI ANSWER (GENERAL)
+# -------------------------------
+def generate_gemini_answer(question):
+    try:
+        response = gemini_model.generate_content(question)
+        return response.text
+    except Exception:
+        return " Gemini API error. Check API key or network."
+
+# -------------------------------
 # STREAMLIT UI
 # -------------------------------
-st.title("📄RAG Chatbot")
+st.title("📄 RAG Chatbot")
 
 query = st.text_input("Ask a question:")
 
@@ -126,18 +133,20 @@ query = st.text_input("Ask a question:")
 # MAIN LOGIC
 # -------------------------------
 if query:
-    query_lower = query.lower()
 
-    if any(x in query_lower for x in ["llm", "model", "what are you", "which model"]):
-        result = "I am a RAG-based chatbot using FLAN-T5 Small"
+    context, score = search_answer(query)
 
+    # safer similarity scaling
+    similarity = 1 / (1 + score)
+
+    if similarity > 0.75 and len(text) > 0:
+        result = generate_doc_answer(context, query)
+        source = "📄 Document (RAG)"
     else:
-        context = search_answer(query, text)
-
-        if context:
-            result = generate_answer(context, query)
-        else:
-            result = "I couldn't find relevant information in the document."
+        result = generate_gemini_answer(query)
+        source = "🌐 Gemini"
 
     st.subheader("Answer:")
     st.write(result)
+
+    st.caption(f"Source: {source}")

@@ -1,5 +1,8 @@
 streamlit
 docx2txt
+numpy
+faiss-cpu
+sentence-transformers
 transformers
 torch
-sentencepiece
+google-generativeai
