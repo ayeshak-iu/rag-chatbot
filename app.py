@@ -11,7 +11,7 @@ import google.generativeai as genai
 # -------------------------------
 # GEMINI SETUP
 # -------------------------------
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 gemini_model = genai.GenerativeModel("gemini-1.5-flash")
 
 # -------------------------------
@@ -119,9 +119,8 @@ def generate_gemini_answer(question):
     try:
         response = gemini_model.generate_content(question)
         return response.text
-    except Exception:
-        return " Gemini API error. Check API key or network."
-
+    except Exception as e:
+        return f"Gemini Error: {str(e)}"
 # -------------------------------
 # STREAMLIT UI
 # -------------------------------
