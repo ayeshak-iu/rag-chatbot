@@ -3,6 +3,7 @@ import docx2txt
 import numpy as np
 import faiss
 import os
+import re
 
 from sentence_transformers import SentenceTransformer
 from transformers import T5Tokenizer, T5ForConditionalGeneration
@@ -21,12 +22,13 @@ hf_client = InferenceClient(
 
 # =====================================
 # LOAD LOCAL FLAN-T5
+# (better stability settings)
 # =====================================
 
 @st.cache_resource
 def load_llm():
-    tokenizer = T5Tokenizer.from_pretrained("google/flan-t5-small")
-    model = T5ForConditionalGeneration.from_pretrained("google/flan-t5-small")
+    tokenizer = T5Tokenizer.from_pretrained("google/flan-t5-base")
+    model = T5ForConditionalGeneration.from_pretrained("google/flan-t5-base")
     return tokenizer, model
 
 
@@ -105,12 +107,21 @@ def get_context(question):
 
 
 # =====================================
-# POST-PROCESSING (3 SENTENCES GUARANTEE)
+# CLEAN OUTPUT (IMPORTANT FIX)
+# =====================================
+
+def clean_text(text):
+    text = re.sub(r'[^a-zA-Z0-9.,!?()\- ]+', ' ', text)
+    text = re.sub(r'\s+', ' ', text)
+    return text.strip()
+
+
+# =====================================
+# ENSURE 3 SENTENCES
 # =====================================
 
 def ensure_3_sentences(text):
-    sentences = text.split(".")
-    sentences = [s.strip() for s in sentences if s.strip()]
+    sentences = [s.strip() for s in text.split(".") if s.strip()]
 
     if len(sentences) < 3:
         text += (
@@ -122,7 +133,7 @@ def ensure_3_sentences(text):
 
 
 # =====================================
-# DOCUMENT ANSWER (RAG)
+# DOCUMENT ANSWER (FIXED GENERATION)
 # =====================================
 
 def document_answer(context, question):
@@ -148,18 +159,20 @@ Answer:
 
     outputs = t5_model.generate(
         **inputs,
-        max_new_tokens=150,
+        max_new_tokens=180,
         min_new_tokens=60,
-        no_repeat_ngram_size=2,
+        num_beams=4,
+        repetition_penalty=1.3,
+        no_repeat_ngram_size=3,
         early_stopping=True
     )
 
-    answer = tokenizer.decode(
-        outputs[0],
-        skip_special_tokens=True
-    )
+    answer = tokenizer.decode(outputs[0], skip_special_tokens=True)
 
-    return ensure_3_sentences(answer)
+    answer = clean_text(answer)
+    answer = ensure_3_sentences(answer)
+
+    return answer
 
 
 # =====================================
@@ -183,7 +196,7 @@ def hf_answer(question):
 
 
 # =====================================
-# MODEL QUESTION DETECTOR
+# MODEL DETECTOR
 # =====================================
 
 def is_model_question(q):
@@ -214,14 +227,13 @@ query = st.text_input("Ask a question:")
 
 if query:
 
-    # MODEL INFO
     if is_model_question(query):
 
         answer = """
 I am a hybrid RAG chatbot.
 
 Document Question Answering:
-- FLAN-T5-small
+- FLAN-T5-base
 - FAISS retrieval
 - Sentence Transformer embeddings
 
@@ -240,5 +252,3 @@ General Questions:
 
     st.subheader("Answer:")
     st.write(answer)
-
-    
