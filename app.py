@@ -214,31 +214,26 @@ def hf_answer(question):
 
     try:
 
-        response = hf_client.text_generation(
-
-            f"""
-You are a helpful AI assistant.
-
-Question:
-{question}
-
-Answer:
-""",
-
-            max_new_tokens=200
+        response = hf_client.chat_completion(
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a helpful AI assistant."
+                },
+                {
+                    "role": "user",
+                    "content": question
+                }
+            ],
+            max_tokens=200
         )
 
-
-        return response
+        return response.choices[0].message.content
 
 
     except Exception as e:
 
-        return (
-            "API Error:\n"
-            + str(e)
-        )
-
+        return f"API Error: {e}"
 
 
 # =====================================
@@ -318,9 +313,7 @@ General Questions:
         context, score = get_context(query)
 
 
-        st.caption(
-            f"Similarity Score: {score:.2f}"
-        )
+        
 
 
         # document retrieval
