@@ -9,19 +9,20 @@ from transformers import T5Tokenizer, T5ForConditionalGeneration
 from huggingface_hub import InferenceClient
 
 
-# ===============================
-# HUGGINGFACE API SETUP
-# ===============================
+# =====================================
+# HUGGINGFACE API
+# =====================================
 
 hf_client = InferenceClient(
-    model="google/flan-t5-base",
+    model="mistralai/Mistral-7B-Instruct-v0.3",
     token=st.secrets["HF_TOKEN"]
 )
 
 
-# ===============================
+
+# =====================================
 # LOAD LOCAL FLAN-T5
-# ===============================
+# =====================================
 
 @st.cache_resource
 def load_llm():
@@ -41,9 +42,9 @@ tokenizer, t5_model = load_llm()
 
 
 
-# ===============================
-# EMBEDDINGS
-# ===============================
+# =====================================
+# EMBEDDING MODEL
+# =====================================
 
 @st.cache_resource
 def load_embedder():
@@ -57,29 +58,36 @@ embedder = load_embedder()
 
 
 
-# ===============================
+# =====================================
 # LOAD DOCUMENT
-# ===============================
+# =====================================
 
 @st.cache_data
-def load_document(path):
+def load_document():
 
-    if not os.path.exists(path):
-        return ""
+    if os.path.exists("sample.docx"):
+        return docx2txt.process("sample.docx")
 
-    return docx2txt.process(path)
-
-
-
-text = load_document("sample.docx")
+    return ""
 
 
+text = load_document()
 
-# ===============================
+
+
+if text == "":
+    text = "No document loaded"
+
+
+
+# =====================================
 # CHUNKING
-# ===============================
+# =====================================
 
-def split_into_chunks(text, chunk_size=500, overlap=50):
+def split_into_chunks(
+        text,
+        chunk_size=500,
+        overlap=50):
 
     chunks = []
 
@@ -87,9 +95,9 @@ def split_into_chunks(text, chunk_size=500, overlap=50):
 
     while start < len(text):
 
-        chunk = text[start:start+chunk_size]
-
-        chunks.append(chunk)
+        chunks.append(
+            text[start:start+chunk_size]
+        )
 
         start += chunk_size - overlap
 
@@ -101,15 +109,10 @@ def split_into_chunks(text, chunk_size=500, overlap=50):
 chunks = split_into_chunks(text)
 
 
-if len(chunks) == 0:
 
-    chunks = ["No document loaded"]
-
-
-
-# ===============================
-# FAISS VECTOR STORE
-# ===============================
+# =====================================
+# FAISS
+# =====================================
 
 embeddings = embedder.encode(
     chunks,
@@ -131,24 +134,25 @@ index.add(embeddings)
 
 
 
-# ===============================
+# =====================================
 # RETRIEVAL
-# ===============================
+# =====================================
 
-def get_context(query):
+def get_context(question):
 
-    q = embedder.encode(
-        [query],
+    query_embedding = embedder.encode(
+        [question],
         normalize_embeddings=True
     )
 
-
-    q = np.array(q).astype("float32")
+    query_embedding = np.array(
+        query_embedding
+    ).astype("float32")
 
 
     scores, ids = index.search(
-        q,
-        k=1
+        query_embedding,
+        1
     )
 
 
@@ -159,15 +163,15 @@ def get_context(query):
 
 
 
-# ===============================
+# =====================================
 # DOCUMENT ANSWER
-# ===============================
+# =====================================
 
 def document_answer(context, question):
 
     prompt = f"""
 
-Answer only using the context.
+Answer using ONLY the context.
 
 Context:
 {context}
@@ -189,63 +193,73 @@ Answer:
     )
 
 
-    output = t5_model.generate(
+    outputs = t5_model.generate(
         **inputs,
-        max_length=120
+        max_length=150
     )
 
 
     return tokenizer.decode(
-        output[0],
+        outputs[0],
         skip_special_tokens=True
     )
 
 
 
-# ===============================
-# HUGGINGFACE FALLBACK LLM
-# ===============================
+# =====================================
+# HUGGINGFACE GENERAL ANSWER
+# =====================================
 
 def hf_answer(question):
 
     try:
 
         response = hf_client.text_generation(
-            question,
-            max_new_tokens=120
+
+            f"""
+You are a helpful AI assistant.
+
+Question:
+{question}
+
+Answer:
+""",
+
+            max_new_tokens=200
         )
+
 
         return response
 
 
     except Exception as e:
 
-        return f"HuggingFace Error: {e}"
+        return (
+            "API Error:\n"
+            + str(e)
+        )
 
 
 
+# =====================================
+# MODEL QUESTION DETECTOR
+# =====================================
 
-# ===============================
-# MODEL QUESTION HANDLER
-# ===============================
+def is_model_question(q):
 
-def is_model_question(query):
-
-    q = query.lower()
-
+    q = q.lower()
 
     keywords = [
 
-        "which model",
-        "what model",
-        "which llm",
         "what llm",
+        "which llm",
+        "what model",
+        "which model",
         "what ai",
         "your model",
         "powered by",
         "built with",
-        "who are you",
-        "are you flan"
+        "who are you"
 
     ]
 
@@ -257,12 +271,14 @@ def is_model_question(query):
 
 
 
+# =====================================
+# STREAMLIT UI
+# =====================================
 
-# ===============================
-# UI
-# ===============================
+st.title(
+    "RAG Chatbot"
+)
 
-st.title("RAG Chatbot")
 
 query = st.text_input(
     "Ask a question:"
@@ -273,26 +289,26 @@ query = st.text_input(
 if query:
 
 
+    # MODEL INFO
+
     if is_model_question(query):
 
         answer = """
 
 I am a hybrid RAG chatbot.
 
-Document questions:
-→ google/flan-t5-small + FAISS retrieval
+Document Question Answering:
+- FLAN-T5-small
+- FAISS retrieval
+- Sentence Transformer embeddings
 
 
-General questions:
-→ google/flan-t5-base through HuggingFace API
-
-
-Embeddings:
-→ all-MiniLM-L6-v2
+General Questions:
+- Mistral-7B-Instruct through HuggingFace API
 
 """
 
-        model_used = "SYSTEM INFO"
+        used = "SYSTEM INFO"
 
 
 
@@ -302,35 +318,43 @@ Embeddings:
         context, score = get_context(query)
 
 
+        st.caption(
+            f"Similarity Score: {score:.2f}"
+        )
 
-        # threshold matches report
 
-        if score > 0.75:
+        # document retrieval
+
+        if score > 0.45:
+
 
             answer = document_answer(
                 context,
                 query
             )
 
-            model_used = "FLAN-T5 (RAG Document)"
+
+            used = "FLAN-T5 (RAG Document)"
 
 
 
         else:
 
+
             answer = hf_answer(
                 query
             )
 
-            model_used = "FLAN-T5 HuggingFace API"
+
+            used = "HuggingFace Mistral API"
 
 
 
-    st.subheader("Answer:")
+    st.subheader(
+        "Answer:"
+    )
 
     st.write(answer)
 
 
-    st.caption(
-        f"Model Used: {model_used}"
-    )
+    
