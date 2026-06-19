@@ -14,7 +14,7 @@ from huggingface_hub import InferenceClient
 # =====================================
 
 hf_client = InferenceClient(
-    model="mistralai/Mistral-7B-Instruct-v0.3",
+    model="HuggingFaceH4/zephyr-7b-beta",
     token=st.secrets["HF_TOKEN"]
 )
 
